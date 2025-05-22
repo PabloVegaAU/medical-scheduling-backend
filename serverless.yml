@@ -1,0 +1,165 @@
+# "org" ensures this Service is used with the correct Serverless Framework Access Key.
+org: testtestex
+# "app" enables Serverless Framework Dashboard features and sharing them with other Services.
+app: medical-scheduling-backend
+# "service" is the name of this project. This will also be added to your AWS resource names.
+service: medical-scheduling-backend
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-offline
+  - serverless-plugin-swagger-ui
+
+stages:
+  default:
+    params:
+      tableNamePE: "appointments-table-pe-${sls:stage}"
+      tableNameCL: "appointments-table-cl-${sls:stage}"
+      topicPE: "arn:aws:sns:${self:provider.region}:${aws:accountId}:appointments-PE-${sls:stage}"
+      topicCL: "arn:aws:sns:${self:provider.region}:${aws:accountId}:appointments-CL-${sls:stage}"
+      queueUrlPE: !GetAtt SQSQueuePE.QueueUrl
+      queueUrlCL: !GetAtt SQSQueueCL.QueueUrl
+      eventBus: "appointments-bus-${sls:stage}"
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1 # región por defecto
+  environment:
+    APPOINTMENTS_TABLE_PE: ${param:tableNamePE} # nombre de tabla DynamoDB inyectado como variable de entorno
+    APPOINTMENTS_TABLE_CL: ${param:tableNameCL} # nombre de tabla DynamoDB inyectado como variable de entorno
+    SNS_TOPIC_PE: ${param:topicPE} # ARN del topic para PE
+    SNS_TOPIC_CL: ${param:topicCL} # ARN del topic para CL
+    SQS_URL_PE: ${param:queueUrlPE} # URL de la cola PE
+    SQS_URL_CL: ${param:queueUrlCL} # URL de la cola CL
+    EVENT_BUS_NAME: ${param:eventBus} # nombre del EventBridge personalizado
+    RDS_HOST: ${env:RDS_HOST} # credenciales RDS desde variables del entorno
+    RDS_PORT: ${env:RDS_PORT}
+    RDS_USER: ${env:RDS_USER}
+    RDS_PASSWORD: ${env:RDS_PASSWORD}
+    RDS_DATABASE: ${env:RDS_DATABASE}
+  iam:
+    role:
+      statements:
+        - Effect: Allow # DynamoDB CRUD
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:Query
+            - dynamodb:UpdateItem
+          Resource:
+            - Fn::GetAtt: [AppointmentsTablePE, Arn]
+            - Fn::GetAtt: [AppointmentsTableCL, Arn]
+        - Effect: Allow # SNS publish
+          Action:
+            - sns:Publish
+          Resource:
+            - Ref: SNSTopicPE
+            - Ref: SNSTopicCL
+        - Effect: Allow # SQS send & receive
+          Action:
+            - sqs:SendMessage
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+          Resource:
+            - Fn::GetAtt: [SQSQueuePE, Arn]
+            - Fn::GetAtt: [SQSQueueCL, Arn]
+        - Effect: Allow # EventBridge put events
+          Action:
+            - events:PutEvents
+          Resource:
+            - Fn::GetAtt: [EventBus, Arn]
+
+functions:
+  swagger:
+    handler: src/handler/api/swagger.handler
+    events:
+      - httpApi:
+          path: /docs
+          method: get
+      - httpApi:
+          path: /docs/{proxy+}
+          method: get
+      - httpApi:
+          path: /docs.json
+          method: get
+
+  createAppointment:
+    handler: src/handler/api/appointment/createAppointment.handler
+    events:
+      - httpApi:
+          path: /appointments
+          method: post # expone endpoint POST para crear citas
+
+  getAppointments:
+    handler: src/handler/api/appointment/getAppointments.handler
+    events:
+      - httpApi:
+          path: /appointments/{insuredId}
+          method: get # expone endpoint GET para obtener citas por asegurado
+
+  processPE:
+    handler: src/handler/queues/processPE.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [SQSQueuePE, Arn]
+          batchSize: 5 # procesamiento por lotes desde cola PE
+
+  processCL:
+    handler: src/handler/queues/processCL.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [SQSQueueCL, Arn]
+          batchSize: 5 # procesamiento por lotes desde cola CL
+
+resources:
+  Resources:
+    AppointmentsTablePE:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${param:tableNamePE}
+        AttributeDefinitions:
+          - AttributeName: insuredId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: insuredId
+            KeyType: HASH # clave primaria hash por asegurado
+        BillingMode: PAY_PER_REQUEST # modo on-demand para evitar aprovisionamiento
+
+    AppointmentsTableCL:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${param:tableNameCL}
+        AttributeDefinitions:
+          - AttributeName: insuredId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: insuredId
+            KeyType: HASH # clave primaria hash por asegurado
+        BillingMode: PAY_PER_REQUEST # modo on-demand para evitar aprovisionamiento
+
+    SNSTopicPE:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: appointments-PE-${sls:stage} # topic SNS para eventos PE
+
+    SNSTopicCL:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: appointments-CL-${sls:stage} # topic SNS para eventos CL
+
+    SQSQueuePE:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointments-PE-queue-${sls:stage} # cola SQS para PE
+
+    SQSQueueCL:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: appointments-CL-queue-${sls:stage} # cola SQS para CL
+
+    EventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: ${param:eventBus} # bus de eventos dedicado
