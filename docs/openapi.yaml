@@ -1,0 +1,111 @@
+openapi: 3.0.0
+info:
+  title: Medical Scheduling API
+  version: 1.0.0
+  description: API para el sistema de agendamiento médico
+servers:
+  - url: https://wegimglzx8.execute-api.us-east-1.amazonaws.com
+    description: DEV Environment
+  - url: https://d63bvcz9uh.execute-api.us-east-1.amazonaws.com
+    description: QA Environment
+  - url: http://localhost:3000
+    description: Local Development
+
+tags:
+  - name: Appointments
+    description: Operaciones relacionadas con citas médicas
+
+paths:
+  /appointments:
+    post:
+      summary: Crear una nueva cita médica
+      tags: [Appointments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [insuredId, scheduleId, countryISO]
+              properties:
+                insuredId:
+                  type: string
+                  description: Código del asegurado
+                scheduleId:
+                  type: string
+                  description: ID del espacio de cita
+                countryISO:
+                  type: string
+                  enum: [PE, CL]
+                  description: Código de país
+      responses:
+        '200':
+          description: Cita creada exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  appointmentId:
+                    type: string
+                  status:
+                    type: string
+                    enum: [pending, completed]
+        '400':
+          description: Datos de entrada inválidos
+        '500':
+          description: Error del servidor
+
+  /appointments/{insuredId}:
+    get:
+      summary: Obtener listado de citas médicas por código de asegurado
+      tags: [Appointments]
+      parameters:
+        - in: path
+          name: insuredId
+          required: true
+          schema:
+            type: string
+          description: Código del asegurado
+        - in: header
+          name: x-country-iso
+          required: true
+          schema:
+            type: string
+            enum: [PE, CL]
+          description: Código de país (PE o CL)
+      responses:
+        '200':
+          description: Lista de citas médicas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Appointment'
+        '400':
+          description: Parámetros inválidos
+        '500':
+          description: Error del servidor
+
+components:
+  schemas:
+    Appointment:
+      type: object
+      properties:
+        appointmentId:
+          type: string
+        scheduleId:
+          type: string
+        status:
+          type: string
+          enum: [pending, completed]
+        centerId:
+          type: number
+        specialtyId:
+          type: number
+        medicId:
+          type: number
+        date:
+          type: string
+          format: date-time

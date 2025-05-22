@@ -1,0 +1,10 @@
+apis:
+  medical-scheduling@1.0:
+    root: docs/openapi.yaml
+
+theme:
+  extends: default
+  openapi:
+    hideHostname: false
+    showConsole: true
+    showObjectSchemaExamples: true
